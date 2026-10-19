@@ -2,6 +2,7 @@ package com.writhlang.marketdata
 
 import com.writhlang.marketdata.bootstrap._
 import com.writhlang.risk._
+import com.writhlang.time.TimeConventions
 
 import java.time.LocalDate
 
@@ -19,12 +20,12 @@ import java.time.LocalDate
   */
 object MarketDataJson {
 
-  def parse(json: String): Either[String, MarketData] = {
+  def parse(json: String, conventions: TimeConventions = TimeConventions.default): Either[String, MarketData] = {
     try {
       val data = ujson.read(json)
       val obj = data.obj
 
-      var market = MarketData()
+      var market = MarketData(conventions = conventions)
       val errors = scala.collection.mutable.ListBuffer.empty[String]
 
       // A dated snapshot: the valuation date. Omitted -> the deterministic default.
@@ -37,7 +38,7 @@ object MarketDataJson {
 
       obj.get("curves").foreach { curves =>
         curves.obj.foreach { case (name, value) =>
-          parseCurve(name, value) match {
+          parseCurve(name, value, market.asOf, conventions) match {
             case Right((key, curve, quotesOpt)) =>
               market = quotesOpt match {
                 case Some(quotes) => market.withCurveAndQuotes(key, curve, quotes)
@@ -76,7 +77,12 @@ object MarketDataJson {
     try Right(LocalDate.parse(value))
     catch { case e: Exception => Left(s"invalid asOf date '$value': ${e.getMessage}") }
 
-  private def parseCurve(name: String, value: ujson.Value): Either[String, (RiskFactorKey, Curve, Option[QuoteSet])] = {
+  private def parseCurve(
+    name: String,
+    value: ujson.Value,
+    asOf: LocalDate,
+    conventions: TimeConventions
+  ): Either[String, (RiskFactorKey, Curve, Option[QuoteSet])] = {
     val typeName = value("type").str
     KeyType.fromName(typeName).toRight(s"curve $name: unknown type $typeName").flatMap { keyType =>
       val key = RiskFactorKey(keyType, name)
@@ -85,7 +91,7 @@ object MarketDataJson {
       } else {
         for {
           instruments <- parseInstruments(value("instruments"))
-          curve <- Bootstrapper.bootstrap(QuoteSet(instruments))
+          curve <- Bootstrapper.bootstrap(QuoteSet(instruments), asOf, conventions)
         } yield (key, curve, Some(QuoteSet(instruments)))
       }
     }

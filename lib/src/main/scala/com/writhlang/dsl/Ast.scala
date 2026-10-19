@@ -120,10 +120,56 @@ case class ShapeMove(key: RiskFactorKey, shape: CurveShift) extends ShockMove
 /** A named bundle of factor moves (scenario). */
 case class Shock(name: String, moves: List[ShockMove])
 
+/**
+  * An ISO-style currency code (three uppercase letters).
+  *
+  * The engine never converts inside pricing: a trade is valued in its own
+  * currency, and translation to a reporting currency happens one level up (the
+  * portfolio/P&L layer), so the FX assumption is explicit and measurable.
+  */
+final case class Currency(code: String) {
+  require(code.length == 3 && code.forall(c => c >= 'A' && c <= 'Z'), s"invalid currency code: $code")
+  override def toString: String = code
+}
+
 /** A portfolio tree node: either a leaf instrument or a named sub-portfolio. */
 sealed trait PortfolioNode
-case class InstrumentLeaf(spec: InstrumentSpec) extends PortfolioNode
+
+/**
+  * A trade leaf: the instrument's terms, the trade's own start date, its
+  * currency, and — as a derived property — the book path it sits under.
+  *
+  * `tradeDate` is what makes the trade a dated, ageing object: schedules and
+  * maturity are measured from it, not from the valuation date. When it is absent
+  * the trade is treated as entered on the snapshot's valuation date.
+  *
+  * `currency` names the currency the trade is denominated in; absent, it is taken
+  * to be the reporting currency (no translation).
+  */
+case class InstrumentLeaf(
+  spec: InstrumentSpec,
+  tradeDate: Option[java.time.LocalDate] = None,
+  currency: Option[Currency] = None
+) extends PortfolioNode
+
 case class Portfolio(name: String, children: List[PortfolioNode]) extends PortfolioNode
 
 /** A whole DSL document: optional shocks plus a portfolio tree. */
 case class Program(shocks: List[Shock], nodes: List[PortfolioNode])
+
+object Program {
+
+  /** Flatten the tree into `(terms, trade date, currency, book path)` in document order. */
+  def trades(
+    nodes: List[PortfolioNode]
+  ): List[(InstrumentSpec, Option[java.time.LocalDate], Option[Currency], List[String])] = {
+    def walk(
+      node: PortfolioNode,
+      path: List[String]
+    ): List[(InstrumentSpec, Option[java.time.LocalDate], Option[Currency], List[String])] = node match {
+      case InstrumentLeaf(spec, tradeDate, currency) => List((spec, tradeDate, currency, path))
+      case Portfolio(name, children)                 => children.flatMap(child => walk(child, path :+ name))
+    }
+    nodes.flatMap(walk(_, Nil))
+  }
+}

@@ -187,6 +187,8 @@ theta/carry P&L is non-zero for an option and matches a manual one-day revaluati
 
 ## Stage 4 — Trade & portfolio layer (population events + aggregation)
 
+**Status: DONE** ✅ (implemented: `com.writhlang.portfolio` — dated `TradeInstance` with `tradeDate`/`currency`, `TradePopulation`, `PopulationDiff` (unchanged/amended/new/cancelled/expired) and `FxConversion`; the **date basis** extends to curves and schedules (`TimeConventions`, `Schedule`, schedule-driven `Pricing`, value 0 at settlement); trade-keyed DAG with `Op.Sum` roll-ups (`agg:<metric>:<path>`) and `Op.Combine` P&L buckets; `DslCompiler.buildPeriodPnl` plus CLI `--prev-input`/`--prev-market`/`--reporting-currency`; duplicate-id errors; `Pricing.normal` per call. **Recorded deviations:** population events are *derived from two dated snapshots* rather than declared as a `state` field; `Expired` is implemented through `tradeDate`; currency translation covers **levels only** at the closing spot, with FX P&L deferred to Stage 6; discretionary cash (unwind/entry/fees) is not modelled. Decisions, rationale and corrections: [docs/decisions/stage-4-trade-portfolio-layer.md](docs/decisions/stage-4-trade-portfolio-layer.md).)
+
 **Goal:** model the book as a set of *trades with lifecycle state*, and aggregate P&L correctly.
 
 **What changes:**
@@ -397,11 +399,14 @@ visible and size-graded), and the contribution nodes reconcile with the Stage 6 
   swaptions, mortgages, FX forwards) while the framework generalizes.
 - **Floating-point reconciliation:** RTPL vs HPL must agree to a tight tolerance; keep evaluation
   order and rounding deterministic (documented in Stage 6/7 acceptance criteria).
-- **Thread-safety:** the shared `Pricing.normal` singleton is not thread-safe; replace with
-  per-call instances when parallelizing (relevant to Stages 6–8).
-- **Legacy DSL:** the current DSL (`rate`, `spread`, `prepay`, `volatility`, `fx`, `curve …`) is
-  a useful smoke-test surface; keep it as a thin front-end over the new taxonomy so existing
-  `PricingDslSuite` tests continue to run as regression checks.
+- **Thread-safety (closed in Stage 4):** the shared `Pricing.normal` singleton was replaced with a
+  per-call `NormalDistribution`, so option pricing is safe under the executor's level parallelism.
+- **Date basis re-baselining:** every convention (day count, calendar, business-day rule) feeds every
+  price, so a change moves published numbers. Keep the convention tests pinned and state the basis
+  beside each expected value.
+- **FX and discretionary cash (Stage 4 boundary):** Stage 4 translates *levels* at the closing spot
+  and excludes FX P&L, unwind prices, entry prices and fees. Stage 6 must add those buckets before
+  an explain can be called economic; until then the period report is a book-value decomposition.
 - **Turnkey vs platform:** even after Stage 7, the *regulatory* explain is a process (data feeds,
   trade system, sign-off); this plan produces the *engine*, not the operating procedure around it.
 - **Cache invalidation:** the δ/Γ cache is only valid for a fixed (asOf date, market state, position set); stale reuse across dates or trades silently corrupts RTPL. Enforce the key explicitly and add a test that changing the date or a trade invalidates the cache.

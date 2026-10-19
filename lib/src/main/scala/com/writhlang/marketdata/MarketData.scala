@@ -2,6 +2,7 @@ package com.writhlang.marketdata
 
 import com.writhlang.marketdata.bootstrap.QuoteSet
 import com.writhlang.risk.RiskFactorKey
+import com.writhlang.time.TimeConventions
 
 import java.time.LocalDate
 
@@ -20,6 +21,7 @@ import java.time.LocalDate
   */
 final case class MarketData(
   asOf: LocalDate = LocalDate.of(2024, 1, 1),
+  conventions: TimeConventions = TimeConventions.default,
   curves: Map[RiskFactorKey, Curve] = Map.empty,
   curveQuotes: Map[RiskFactorKey, QuoteSet] = Map.empty,
   volSurfaces: Map[RiskFactorKey, VolSurface] = Map.empty,
@@ -29,6 +31,9 @@ final case class MarketData(
 ) {
   /** The same snapshot valued one valuation date later (or earlier). */
   def withAsOf(date: LocalDate): MarketData = copy(asOf = date)
+
+  /** Years from `from` to `to` under this snapshot's day-count convention. */
+  def yearFraction(from: LocalDate, to: LocalDate): Double = conventions.yearFraction(from, to)
 
   def curve(key: RiskFactorKey): Curve = curves(key)
   def quotes(key: RiskFactorKey): QuoteSet = curveQuotes(key)

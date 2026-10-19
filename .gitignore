@@ -12,3 +12,8 @@ out/
 # Optional: common macOS and IDE files
 .DS_Store
 .idea/
+.vscode/
+
+# Editor/tooling state
+.metals/
+.bsp/

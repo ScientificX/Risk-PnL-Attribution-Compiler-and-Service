@@ -10,6 +10,8 @@ object Parser {
   private case class NumberValue(value: Double) extends PropValue
   private case class RefValue(key: RiskFactorKey) extends PropValue
   private case class FlagValue(value: Boolean) extends PropValue
+  private case class DateValue(text: String) extends PropValue
+  private case class CurrencyValue(text: String) extends PropValue
 
   private case class InstrumentRaw(kind: String, id: String, props: List[(String, PropValue)])
 
@@ -34,8 +36,43 @@ object Parser {
       if (errors.nonEmpty) Left(errors.mkString("; "))
       else Right(Portfolio(name, validated.collect { case Right(v) => v }))
     case RawInstrument(instr) =>
-      validateInstrument(instr).map(spec => InstrumentLeaf(spec))
+      for {
+        spec <- validateInstrument(instr)
+        tradeDate <- tradeDateOf(instr)
+        currency <- currencyOf(instr)
+      } yield InstrumentLeaf(spec, tradeDate, currency)
   }
+
+  /**
+    * The trade's own start date, `tradeDate YYYY-MM-DD`. Optional in a single
+    * snapshot (it defaults to the valuation date); a period run requires it, since
+    * an implicit date would re-anchor the same trade at each snapshot and it would
+    * never age.
+    */
+  private def tradeDateOf(raw: InstrumentRaw): Either[String, Option[java.time.LocalDate]] =
+    raw.props.toMap.get("tradeDate") match {
+      case None => Right(None)
+      case Some(DateValue(text)) =>
+        try Right(Some(java.time.LocalDate.parse(text)))
+        catch {
+          case _: java.time.format.DateTimeParseException =>
+            Left(s"instrument ${raw.id} property tradeDate is not a valid date: $text (expected YYYY-MM-DD)")
+        }
+      case Some(_) =>
+        Left(s"instrument ${raw.id} property tradeDate must be a date (YYYY-MM-DD)")
+    }
+
+  /**
+    * The trade's currency, `currency EUR` — three uppercase letters. Absent, the
+    * trade is taken to be denominated in the reporting currency (no translation).
+    */
+  private def currencyOf(raw: InstrumentRaw): Either[String, Option[Currency]] =
+    raw.props.toMap.get("currency") match {
+      case None                      => Right(None)
+      case Some(CurrencyValue(code)) => Right(Some(Currency(code)))
+      case Some(_) =>
+        Left(s"instrument ${raw.id} property currency must be a three-letter uppercase code, e.g. EUR")
+    }
 
   private def validateInstrument(raw: InstrumentRaw): Either[String, InstrumentSpec] = {
     val props = raw.props.toMap
@@ -74,6 +111,18 @@ object Parser {
         case Some(_) => Left(s"instrument ${raw.id} property $name must be a number")
       }
 
+    /**
+      * A payment frequency has to generate whole-month steps, so it must divide
+      * 12: 1, 2, 3, 4, 6 or 12 payments a year. Anything else cannot be turned
+      * into a cashflow schedule and is rejected here rather than silently
+      * approximated in pricing.
+      */
+    def optFrequency(name: String, default: Int): Either[String, Int] =
+      optPositiveInt(name, default).flatMap { freq =>
+        if (12 % freq == 0) Right(freq)
+        else Left(s"instrument ${raw.id} property $name must divide 12 (1, 2, 3, 4, 6 or 12), got $freq")
+      }
+
     def reqRef(name: String): Either[String, RiskFactorKey] =
       props.get(name) match {
         case Some(RefValue(key)) => Right(key)
@@ -96,7 +145,7 @@ object Parser {
           maturity <- reqPositiveInt("maturity")
           discount <- reqRef("discountCurve")
           credit <- reqRef("creditCurve")
-          freq <- optPositiveInt("freq", 1)
+          freq <- optFrequency("freq", 1)
         } yield BondSpec(raw.id, notional, coupon, maturity, discount, credit, freq)
 
       case "mortgage" =>
@@ -126,7 +175,7 @@ object Parser {
           maturity <- reqPositiveInt("maturity")
           discount <- reqRef("discountCurve")
           credit <- reqRef("creditCurve")
-          freq <- optPositiveInt("freq", 1)
+          freq <- optFrequency("freq", 1)
         } yield SwapSpec(raw.id, notional, fixedRate, maturity, discount, credit, freq)
 
       case "cap" =>
@@ -134,7 +183,7 @@ object Parser {
           notional <- reqNumber("notional")
           strike <- reqNumber("strike")
           maturity <- reqPositiveInt("maturity")
-          freq <- optPositiveInt("freq", 4)
+          freq <- optFrequency("freq", 4)
           discount <- reqRef("discountCurve")
           credit <- reqRef("creditCurve")
           vol <- reqRef("volSurface")
@@ -146,7 +195,7 @@ object Parser {
           strike <- reqNumber("strike")
           expiry <- reqPositiveNumber("expiry")
           maturity <- reqPositiveInt("maturity")
-          freq <- optPositiveInt("freq", 2)
+          freq <- optFrequency("freq", 2)
           isPayer <- optFlag(default = true)
           discount <- reqRef("discountCurve")
           credit <- reqRef("creditCurve")
@@ -259,7 +308,15 @@ object Parser {
 
   // ---- props ----
 
-  private def prop[_: P]: P[(String, PropValue)] = P(refProp | flagProp | numberProp)
+  private def prop[_: P]: P[(String, PropValue)] = P(refProp | flagProp | dateProp | currencyProp | numberProp)
+
+  private def dateProp[_: P]: P[(String, PropValue)] =
+    P("tradeDate" ~ ws ~ CharsWhile(ch => ch.isDigit || ch == '-', 1).! ~ entryEnd)
+      .map(text => ("tradeDate", DateValue(text): PropValue))
+
+  private def currencyProp[_: P]: P[(String, PropValue)] =
+    P("currency" ~ ws ~ CharIn("ABCDEFGHIJKLMNOPQRSTUVWXYZ").rep(exactly = 3).! ~ entryEnd)
+      .map(text => ("currency", CurrencyValue(text): PropValue))
 
   private def refProp[_: P]: P[(String, PropValue)] = P(
     ("discountCurve" | "creditCurve" | "prepayCurve" | "volSurface" | "domesticCurve" | "foreignCurve" | "fxSpot").! ~ ws ~ ident ~ entryEnd
