@@ -31,15 +31,33 @@ object Executor {
 
     instr.op match {
       case Const(v) => Right(v)
-      case Price(instrument, market, elapsedYears) =>
-        Right(Pricing.price(instrument, market, elapsedYears))
+      case Sum =>
+        instr.deps.foldLeft[Either[ExecutionError, Double]](Right(0.0)) { (running, dependency) =>
+          for {
+            total <- running
+            value <- req(dependency)
+          } yield total + value
+        }
+      case Price(instrument, market, tradeDate) =>
+        Right(Pricing.price(instrument, market, tradeDate))
       case Theta(baseId, thetaEvalId) =>
         for {
           base <- req(baseId)
           thetaEval <- req(thetaEvalId)
         } yield thetaEval - base
-      case Carry(instrument, market, elapsedYears) =>
-        Right(Pricing.carry(instrument, market, elapsedYears))
+      case Carry(instrument, from, to, tradeDate) =>
+        Right(Pricing.carry(instrument, from, to, tradeDate))
+      case Accrued(instrument, market, tradeDate) =>
+        Right(Pricing.accrued(instrument, market, tradeDate))
+      case CashFlow(instrument, market, from, to, tradeDate) =>
+        Right(Pricing.cashIn(instrument, market, from, to, tradeDate))
+      case Combine(terms) =>
+        terms.foldLeft[Either[ExecutionError, Double]](Right(0.0)) { case (running, (dependency, coefficient)) =>
+          for {
+            total <- running
+            value <- req(dependency)
+          } yield total + coefficient * value
+        }
       case DeltaCentral(baseId, upId, downId, bump) =>
         for {
           base <- req(baseId)

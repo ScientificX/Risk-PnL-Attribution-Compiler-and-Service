@@ -47,13 +47,21 @@ final case class Scenario(name: String, shifts: Map[RiskFactorKey, List[Scenario
         if (market.curveQuotes.contains(key)) {
           // Shock the quotes, then re-bootstrap the derived curve.
           val shiftedQuotes = market.curveQuotes(key).shifted(shape.at)
-          market.withCurveAndQuotes(key, Bootstrapper.bootstrapOrThrow(shiftedQuotes), shiftedQuotes)
+          market.withCurveAndQuotes(
+            key,
+            Bootstrapper.bootstrapOrThrow(shiftedQuotes, market.asOf, market.conventions),
+            shiftedQuotes
+          )
         } else {
           market.withCurve(key, market.curve(key).shifted(shape.at))
         }
       case ParQuoteShift(tenor, amount) if isCurveKey(key.keyType) =>
         val shiftedQuotes = market.curveQuotes(key).shiftOne(tenor, amount)
-        market.withCurveAndQuotes(key, Bootstrapper.bootstrapOrThrow(shiftedQuotes), shiftedQuotes)
+        market.withCurveAndQuotes(
+          key,
+          Bootstrapper.bootstrapOrThrow(shiftedQuotes, market.asOf, market.conventions),
+          shiftedQuotes
+        )
       case AdditiveShift(shape) if key.keyType == KeyType.Prepay =>
         market.withPrepayVector(key, market.prepayVector(key).shifted(shape.at))
       case AdditiveShift(shape) if isVolKey(key.keyType) =>

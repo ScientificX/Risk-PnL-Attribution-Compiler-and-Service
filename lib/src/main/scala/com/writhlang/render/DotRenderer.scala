@@ -49,9 +49,13 @@ object DotRenderer {
 
   private def nodeLabel(instr: Instruction): (String, String) = instr.op match {
     case Const(_) => (s"${instr.id}\\nshock", "#fbbc04")
+    case Sum => (s"${instr.id}\\nΣ", "#cfd8dc")
+    case Accrued(_, _, _) => (s"${instr.id}\\naccrued", "#dcedc8")
+    case CashFlow(_, _, _, _, _) => (s"${instr.id}\\ncash", "#c5e1a5")
+    case Combine(_) => (s"${instr.id}\\npnl", "#f8bbd0")
     case Price(_, _, _) => (s"${instr.id}\\nprice", "#a7c7e7")
     case Theta(_, _) => (s"${instr.id}\\ntheta", "#fff9c4")
-    case Carry(_, _, _) => (s"${instr.id}\\ncarry", "#ffe0b2")
+    case Carry(_, _, _, _) => (s"${instr.id}\\ncarry", "#ffe0b2")
     case DeltaCentral(_, _, _, _) => (s"${instr.id}\\ndelta", "#c8e6c9")
     case DeltaForward(_, _, _) => (s"${instr.id}\\ndelta", "#c8e6c9")
     case DeltaBackward(_, _, _) => (s"${instr.id}\\ndelta", "#c8e6c9")

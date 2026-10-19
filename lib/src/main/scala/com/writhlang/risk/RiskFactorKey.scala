@@ -8,6 +8,16 @@ package com.writhlang.risk
   */
 final case class Tenor(years: Double) {
   def canonical: String = Tenor.renderYears(years) + "Y"
+
+  /**
+    * The calendar date `years` after `asOf`: whole years by year, anything else
+    * by whole months (`0.25` → +3 months, `1.5` → +18 months). The engine's time
+    * axis is year fractions derived from dates, so a quoted tenor is resolved to
+    * a date before it can be bootstrapped.
+    */
+  def resolve(asOf: java.time.LocalDate): java.time.LocalDate =
+    if (years == years.toLong.toDouble) asOf.plusYears(years.toLong)
+    else asOf.plusMonths(math.round(years * 12.0))
 }
 
 object Tenor {

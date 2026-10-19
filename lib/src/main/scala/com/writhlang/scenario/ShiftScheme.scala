@@ -1,7 +1,9 @@
 package com.writhlang.scenario
 
 import com.writhlang.risk.{KeyType, RiskFactorKey}
-import com.writhlang.time.{Calendar, DayCount, ThetaPeriod}
+import com.writhlang.time.{BusinessDayConvention, Calendar, DayCount, ThetaPeriod, TimeConventions}
+
+import java.time.LocalDate
 
 /**
   * The finite-difference scheme used to estimate a first-order sensitivity
@@ -30,15 +32,31 @@ object ShiftScheme {
 
 /**
   * Configuration for finite-difference sensitivities: the differencing scheme
-  * plus per-factor bump sizes (a basis point is `1e-4`).
+  * plus per-factor bump sizes (a basis point is `1e-4`), and the date
+  * conventions used to advance the valuation date for theta.
   */
 final case class SensitivityConfig(
   shiftScheme: ShiftScheme = ShiftScheme.Central,
   bumpFor: RiskFactorKey => Double = SensitivityConfig.defaultBump,
   thetaPeriod: Option[ThetaPeriod] = Some(ThetaPeriod(days = 1)),
   dayCount: DayCount = DayCount.Actual365Fixed,
-  calendar: Calendar = Calendar.weekend
-)
+  calendar: Calendar = Calendar.weekend,
+  businessDayConvention: BusinessDayConvention = BusinessDayConvention.Unadjusted
+) {
+
+  /** The date conventions this configuration implies. */
+  def conventions: TimeConventions =
+    TimeConventions(dayCount, calendar, businessDayConvention)
+
+  /**
+    * The valuation date advanced by the theta horizon and rolled onto a business
+    * day. Theta is a full revaluation at this date, not a tenor shift.
+    */
+  def thetaValuationDate(asOf: LocalDate): Option[LocalDate] =
+    thetaPeriod.map(period =>
+      businessDayConvention.adjust(calendar.addBusinessDays(asOf, period.days), calendar)
+    )
+}
 
 object SensitivityConfig {
   private val rateBump    = 0.0001 // 1bp

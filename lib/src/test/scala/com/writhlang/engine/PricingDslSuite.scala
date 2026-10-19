@@ -43,21 +43,41 @@ class PricingDslSuite extends AnyFunSuite {
 
   private def parse(dsl: String): Program = Parser.parseProgram(dsl).toOption.get
 
+  private def buildDag(
+    program: Program,
+    market: MarketData,
+    config: SensitivityConfig = SensitivityConfig()
+  ): Dag = DslCompiler.build(program, market, config).toOption.get
+
   test("bootstrapper builds discount factors for the worked example") {
+    val asOf = market.asOf
+    val conventions = market.conventions
     val quotes = QuoteSet(List(
       Deposit(Tenor(1.0), 0.035),
       Swap(Tenor(2.0), 0.040, 1),
       Swap(Tenor(3.0), 0.045, 1)
     ))
-    val curve = Bootstrapper.bootstrap(quotes).toOption.get
+    val curve = Bootstrapper.bootstrap(quotes, asOf).toOption.get
 
-    val df1 = math.exp(-0.035 * 1.0)
-    val df2 = (1.0 - 0.040 * df1) / (1.0 + 0.040)
-    val df3 = (1.0 - 0.045 * (df1 + df2)) / (1.0 + 0.045)
+    // Pillars are quoted at the day-count fraction from asOf to the *resolved date*:
+    // a "1Y" tenor starting in 2024 lands 366 days out, not 365.
+    val date1 = Tenor(1.0).resolve(asOf)
+    val date2 = Tenor(2.0).resolve(asOf)
+    val date3 = Tenor(3.0).resolve(asOf)
+    val yf1 = conventions.yearFraction(asOf, date1)
+    val yf2 = conventions.yearFraction(asOf, date2)
+    val yf3 = conventions.yearFraction(asOf, date3)
+    val accrual1 = conventions.yearFraction(asOf, date1)
+    val accrual2 = conventions.yearFraction(date1, date2)
+    val accrual3 = conventions.yearFraction(date2, date3)
 
-    assert(math.abs(curve.df(1.0) - df1) < 1e-12)
-    assert(math.abs(curve.df(2.0) - df2) < 1e-12)
-    assert(math.abs(curve.df(3.0) - df3) < 1e-12)
+    val df1 = math.exp(-0.035 * yf1)
+    val df2 = (1.0 - 0.040 * accrual1 * df1) / (1.0 + 0.040 * accrual2)
+    val df3 = (1.0 - 0.045 * (accrual1 * df1 + accrual2 * df2)) / (1.0 + 0.045 * accrual3)
+
+    assert(math.abs(curve.df(yf1) - df1) < 1e-12)
+    assert(math.abs(curve.df(yf2) - df2) < 1e-12)
+    assert(math.abs(curve.df(yf3) - df3) < 1e-12)
   }
 
   test("par-conversion: a +1bp 2Y swap bump reprices a 3Y bond via re-bootstrap") {
@@ -70,7 +90,7 @@ class PricingDslSuite extends AnyFunSuite {
         |}
         |""".stripMargin)
 
-    val results = run(DslCompiler.build(program, market))
+    val results = run(buildDag(program, market))
     val base = results(DslCompiler.basePriceId("B1"))
     val full = results(DslCompiler.fullScenarioId("B1", "up2y"))
     val linear = results(DslCompiler.linearScenarioId("B1", "up2y"))
@@ -96,7 +116,7 @@ class PricingDslSuite extends AnyFunSuite {
 
     def deltaFor(scheme: ShiftScheme): Double = {
       val cfg = SensitivityConfig(shiftScheme = scheme)
-      val results = run(DslCompiler.build(program, market, cfg))
+      val results = run(buildDag(program, market, cfg))
       results(DslCompiler.deltaId("B1", eur2yKey))
     }
 
@@ -123,7 +143,7 @@ class PricingDslSuite extends AnyFunSuite {
       Swap(Tenor(2.0), 0.040, 1),
       Swap(Tenor(3.0), 0.020, 1)
     ))
-    assert(Bootstrapper.bootstrap(nonMonotonic).isLeft)
+    assert(Bootstrapper.bootstrap(nonMonotonic, market.asOf).isLeft)
   }
 
   test("JSON loader round-trips the market-data schema") {
@@ -159,7 +179,7 @@ class PricingDslSuite extends AnyFunSuite {
         |  instrument fxforward F1 { notional 1000000; fxRate 1.25; maturity 1; domesticCurve EUR; foreignCurve EUR; fxSpot EURUSD; }
         |}
         |""".stripMargin)
-    val results = run(DslCompiler.build(program, market))
+    val results = run(buildDag(program, market))
     val base = results(DslCompiler.basePriceId("F1"))
     val full = results(DslCompiler.fullScenarioId("F1", "fxup"))
     assert(math.abs(base) < 1.0, "forward is near zero when domestic equals foreign")
@@ -173,7 +193,7 @@ class PricingDslSuite extends AnyFunSuite {
         |  instrument bond B1 { notional 1000; coupon 0.045; maturity 3; discountCurve EUR; creditCurve EUR.CREDIT; freq 1; }
         |}
         |""".stripMargin)
-    val dag = DslCompiler.build(program, market)
+    val dag = buildDag(program, market)
     val dot = DotRenderer.toDot(dag)
     assert(dot.contains("subgraph cluster_B1"))
     dag.nodes.keys.foreach(id => assert(dot.contains(s"\"$id\" [label="), s"missing node $id"))

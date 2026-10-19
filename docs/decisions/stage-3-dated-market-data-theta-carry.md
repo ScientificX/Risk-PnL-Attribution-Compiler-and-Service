@@ -11,9 +11,11 @@
 
 ## 1. Status
 
-**Not yet implemented.** This log captures the concept clarifications and design
-decisions reached while planning Stage 3. It is the agreed conceptual baseline the
-implementation must follow.
+**Implemented in Stage 3**, with one part revised in Stage 4: `theta` is now a *clean*
+price change and `carry` is accrued interest plus contractual cash, and the uniform
+`elapsedYears` tenor shift was replaced by date-anchored schedules. See
+[§9](#9-post-stage-4-update-recorded-after-implementation). The concepts below remain the
+baseline the implementation followed.
 
 ## 2. The core question Stage 3 answers
 
@@ -174,7 +176,31 @@ its own small rolldown.
 - **`rolldown` vs. `pure time decay` sub-split** → Stage 6/9 (attribution identity).
 - **Date-anchored schedules & accrual** (clean/dirty price, coupon-date re-anchoring
   across accrual boundaries) — Stage 3 uses a uniform `elapsedYears` tenor shift, exact
-  for a one-day horizon, approximate beyond the first accrual period.
+  for a one-day horizon, approximate beyond the first accrual period. *(Superseded in
+  Stage 4 — see §9.)*
 - **Financing / repo cost as an explicit input** — currently only the accrual side of
   carry is exercised; funding cost is deferred with the XVA/portfolio layers.
+
+## 9. Post-Stage-4 update (recorded after implementation)
+
+Stage 3 shipped `Pricing.price(instrument, market, elapsedYears)`: a uniform tenor shift
+in which `theta` was the *dirty* value change (it contained accrual) and `carry` was the
+accrued coupon. Stage 4 replaced the time axis with date-derived year fractions
+(`TimeConventions`, `Schedule`), so a valuation is a function of the valuation date and
+the trade's own date. Two consequences for this log:
+
+- **`theta` is now a clean-price change.** The dirty change contains accrual, so adding
+  an accrual-based carry would double-count it. Stage 4 defines
+  `theta = clean(t1) − clean(t0)` and `carry = Δaccrued + contractual cash in the window`;
+  the total is unchanged, and the split now matches §4's decomposition (carry is cash,
+  time decay is price). A premium bond correctly shows negative clean theta (premium
+  amortisation) and positive carry.
+- **Date-anchored schedules and accrual are no longer deferred.** Coupon dates are
+  calendar dates measured from the trade date, each period accrues on the day-count basis
+  between its actual dates, clean and dirty values are distinguished (`Pricing.accrued`),
+  and a trade is worth zero at its settlement date. The `elapsedYears` shift is gone.
+
+The rolldown-vs-pure-time-decay split (§7.3) and financing cost (§8) remain deferred to
+Stage 6, as recorded. The Stage 4 identity and its buckets are in
+[stage-4-trade-portfolio-layer.md](stage-4-trade-portfolio-layer.md).
 
