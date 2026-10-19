@@ -54,6 +54,16 @@ Delta supports **forward/backward/central** differencing (default central); **ga
 
 See [§4.1](#41-correction-listkey-shift--mapkey-listshift).
 
+### 2.9 Credit is represented as a spread over the base curve
+
+A `CreditCurve` is stored as a **zero spread over the base curve**, not as a standalone risky discount curve. `MarketData.combinedCurve(discountKey, creditKey)` returns `curve(discountKey).plus(curve(creditKey))`, and `Curve.plus` adds the two rate functions pointwise: `r_eff(t) = r_base(t) + spread(t)`, hence `df_eff(t) = df_base(t) · e^(-spread(t)·t)`.
+
+**Why:** with continuous compounding, rate addition is exactly discount-factor multiplication, and the `Curve` algebra only composes that way (`plus` / `shifted`; there is no curve product). Keeping credit as a spread also keeps the two inputs independently observable and independently shockable — a base-curve move cannot silently rewrite the credit assumption — and keeps rates and credit as separate risk factors with separate hedges and separate P&L buckets (Stages 5–6).
+
+**Consequence:** the flat value must be a spread in rate units — an annual decimal such as `0.0015` for 15bp — not an absolute credit-risky yield, which would double-count the base rate. It is a discounting spread, not a credit model: no default probability, recovery, or CDS bootstrap, and the curve is flat-only in JSON.
+
+See [dsl-reference.md §8.7–8.8](../dsl-reference.md#87-the-credit-curve-a-spread-over-the-base-curve).
+
 ## 3. Concepts clarified during the conversation
 
 ### 3.1 Bump-and-reprice
